@@ -10,6 +10,8 @@ import re
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from discord.ext import tasks
+from fastapi import FastAPI
+
 
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -116,7 +118,7 @@ async def on_message(message):
         return
 
     if message.content.lower() == "hej":
-        await message.channel.send("HEJSA :) Glade for at høre et hej fra dig!")
+        await message.channel.send("HEJSA :) Glad for at høre et hej fra dig!")
 
     if message.content.startswith("!sync"):
         await message.channel.send("Syncing calendar...")
@@ -165,6 +167,12 @@ async def on_message(message):
 async def sync_calendar_loop():
     print('1.5 Hour poll.')
     await poll_calendar()
+
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
 
 def keep_alive():
     class Handler(BaseHTTPRequestHandler):
