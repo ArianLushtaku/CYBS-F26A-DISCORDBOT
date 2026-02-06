@@ -11,6 +11,9 @@ from discord.ext import tasks
 from fastapi import FastAPI
 
 
+app = FastAPI()
+
+
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CALENDAR_URL = os.getenv("CALENDER_URL")
@@ -75,18 +78,25 @@ async def on_ready():
 async def poll_calendar():
     for guild in client.guilds:
         print(f"Updating calendar for guild: {guild.name} ({guild.id})")
+
         merged_events = parse_calendar()
 
-        for course, date, location, start, end in merged_events:
-            merged_uid = f"{course}_{date}_{location}"
-            key = f"{guild.id}_{merged_uid}"
-            discord_event_id = event_mapping.get(key)
+        # Fetch existing scheduled events from Discord
+        existing_events = await guild.fetch_scheduled_events()
+        existing_keys = {}  # key -> event
+        for e in existing_events:
+            key = f"{e.name}_{e.start.date()}_{e.location}"
+            existing_keys[key] = e
 
-            if discord_event_id:
-                event = discord.utils.get(await guild.fetch_scheduled_events(), id=discord_event_id)
-                if event and (event.name != course or event.start != start or event.end != end or event.location != location):
+        for course, date, location, start, end in merged_events:
+            key = f"{course}_{date}_{location}"
+            if key in existing_keys:
+                # Update existing event if anything changed
+                event = existing_keys[key]
+                if event.name != course or event.start != start or event.end != end or event.location != location:
                     await event.edit(name=course, start=start, end=end, location=location)
             else:
+                # Create new event if it doesn’t exist
                 event = await guild.create_scheduled_event(
                     name=course,
                     start_time=start,
@@ -95,7 +105,6 @@ async def poll_calendar():
                     entity_type=discord.EntityType.external,
                     privacy_level=discord.PrivacyLevel.guild_only
                 )
-                event_mapping[key] = event.id
 
 async def delete_calender():
     for guild in client.guilds:
@@ -165,8 +174,6 @@ async def on_message(message):
 async def sync_calendar_loop():
     print('1.5 Hour poll.')
     await poll_calendar()
-
-app = FastAPI()
 
 @app.get("/")
 async def root():
