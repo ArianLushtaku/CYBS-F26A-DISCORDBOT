@@ -9,6 +9,7 @@ import requests
 import re
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
+from discord.ext import tasks
 
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -19,6 +20,7 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 
 event_mapping = {}
+
 
 def parse_calendar(max_days_ahead=21):
     """Fetch ICS, parse events, merge overlapping, and return list of merged events."""
@@ -158,6 +160,11 @@ async def on_message(message):
             )
 
         await message.channel.send(embed=embed)
+
+@tasks.loop(hours=1.5)
+async def sync_calendar_loop():
+    print('1.5 Hour poll.')
+    await poll_calendar()
 
 def keep_alive():
     class Handler(BaseHTTPRequestHandler):
