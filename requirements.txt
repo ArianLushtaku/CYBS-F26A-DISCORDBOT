@@ -3,3 +3,4 @@ icalendar
 python-dotenv
 requests
 fastapi
+uvicorn[standard]
