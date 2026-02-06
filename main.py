@@ -1,6 +1,4 @@
 import discord
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from discord.ext import tasks
 from icalendar import Calendar
 from dotenv import load_dotenv
@@ -174,16 +172,8 @@ app = FastAPI()
 async def root():
     return {"status": "ok"}
 
-def keep_alive():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
-
-    server = HTTPServer(("0.0.0.0", int(os.environ["PORT"])), Handler)
-    server.serve_forever()
-
-threading.Thread(target=keep_alive, daemon=True).start()
+@app.head("/")
+def head():
+    return "", 200
 
 client.run(DISCORD_TOKEN)
