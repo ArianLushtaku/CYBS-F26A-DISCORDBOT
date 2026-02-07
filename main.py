@@ -413,11 +413,6 @@ async def _get_calendar_channel(guild: discord.Guild) -> Optional[discord.abc.Me
         if ch is not None:
             return ch
 
-    channel_id = _parse_channel_id(CALENDAR_CHANNEL_ID)
-    if channel_id is not None:
-        ch = guild.get_channel(channel_id)
-        if ch is not None:
-            return ch
     if guild.system_channel is not None:
         return guild.system_channel
     for ch in guild.text_channels:
@@ -623,14 +618,14 @@ async def setup(interaction: discord.Interaction, channel: discord.TextChannel):
 
 
 @bot.tree.command(name="uge", description="Vis ugekalenderen (mandag–søndag)")
-@app_commands.describe(uge="ISO-ugenummer (1-53)", år="År (valgfrit, standard er indeværende ISO-år)")
+@app_commands.describe(uge="Ugenummer (1-53)", år="År (Standard er indeværende år)")
 async def uge(interaction: discord.Interaction, uge: Optional[int] = None, år: Optional[int] = None):
     merged_events = parse_calendar(max_days_ahead=800)
     if uge is not None and (uge < 1 or uge > 53):
         await interaction.response.send_message("Ugenummer skal være mellem 1 og 53.", ephemeral=True)
         return
-    if år is not None and (år < 2000 or år > 2100):
-        await interaction.response.send_message("År skal være mellem 2000 og 2100.", ephemeral=True)
+    if år is not None and (år < 2025 or år > 2030):
+        await interaction.response.send_message("År skal være format ex. 2026", ephemeral=True)
         return
 
     if uge is None and år is not None:
@@ -692,114 +687,6 @@ async def skema(
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-broadcast_group = app_commands.Group(name="broadcast", description="Send kalenderbeskeder offentligt i kanalen")
-
-
-@broadcast_group.command(name="uge", description="Broadcast en ugekalender til serveren")
-@app_commands.describe(uge="ISO-ugenummer (1-53)", år="År (valgfrit)", everyone="Nævn @everyone")
-async def broadcast_uge(
-    interaction: discord.Interaction,
-    uge: Optional[int] = None,
-    år: Optional[int] = None,
-    everyone: Optional[bool] = False,
-):
-    if interaction.guild is None:
-        await interaction.response.send_message("Denne kommando kan kun bruges i en server.", ephemeral=True)
-        return
-
-    if uge is not None and (uge < 1 or uge > 53):
-        await interaction.response.send_message("Ugenummer skal være mellem 1 og 53.", ephemeral=True)
-        return
-    if år is not None and (år < 2000 or år > 2100):
-        await interaction.response.send_message("År skal være mellem 2000 og 2100.", ephemeral=True)
-        return
-
-    channel = await _get_calendar_channel(interaction.guild)
-    if channel is None:
-        await interaction.response.send_message("Kunne ikke finde en kanal at sende i. Kør /setup først.", ephemeral=True)
-        return
-
-    merged_events = parse_calendar(max_days_ahead=800)
-    content = "@everyone" if everyone else None
-
-    # If only year is provided, broadcast the year overview.
-    if uge is None and år is not None:
-        embeds = _build_year_embeds(merged_events, year=år)
-        await interaction.response.send_message("Broadcast sender...", ephemeral=True)
-        first = True
-        for e in embeds:
-            if first:
-                await channel.send(content=content, embed=e)
-                first = False
-            else:
-                await channel.send(embed=e)
-        return
-
-    embed = _build_week_embed(merged_events, week=uge, year=år)
-    await channel.send(content=content, embed=embed)
-    await interaction.response.send_message("Broadcast sendt.", ephemeral=True)
-
-
-@broadcast_group.command(name="skema", description="Broadcast dagens/næste skema til serveren")
-@app_commands.choices(
-    vis=[
-        app_commands.Choice(name="I dag", value="today"),
-        app_commands.Choice(name="Næste", value="next"),
-    ]
-)
-@app_commands.describe(everyone="Nævn @everyone")
-async def broadcast_skema(
-    interaction: discord.Interaction,
-    vis: Optional[app_commands.Choice[str]] = None,
-    everyone: Optional[bool] = False,
-):
-    if interaction.guild is None:
-        await interaction.response.send_message("Denne kommando kan kun bruges i en server.", ephemeral=True)
-        return
-
-    channel = await _get_calendar_channel(interaction.guild)
-    if channel is None:
-        await interaction.response.send_message("Kunne ikke finde en kanal at sende i. Kør /setup først.", ephemeral=True)
-        return
-
-    merged_events = parse_calendar(max_days_ahead=800)
-    today = datetime.now(timezone.utc).date()
-    mode = (vis.value if vis is not None else "today")
-    events_today = [e for e in merged_events if e[1] == today]
-
-    if mode == "next" or not events_today:
-        future_events = [e for e in merged_events if e[1] >= today]
-        if not future_events:
-            await interaction.response.send_message("Ingen skemalagte planer fundet!", ephemeral=True)
-            return
-
-        next_date = min(e[1] for e in future_events)
-        events_today = [e for e in future_events if e[1] == next_date]
-        embed_title = f"📅 Næste planlagte modul ({_format_danish_date(next_date)})"
-        embed_color = discord.Color.orange()
-    else:
-        embed_title = f"📅 Skema idag ({_format_danish_date(today)})"
-        embed_color = discord.Color.blue()
-
-    embed = discord.Embed(title=embed_title, color=embed_color)
-    parts = []
-    for course, date, location, start, end in events_today:
-        parts.append(
-            "\n".join(
-                [
-                    f"**{course}**",
-                    f"Tid: {start.strftime('%H:%M')} - {end.strftime('%H:%M')}",
-                    f"Lokale: {location if location else 'N/A'}",
-                ]
-            )
-        )
-    embed.description = "\n\n--------\n\n".join(parts)
-
-    content = "@everyone" if everyone else None
-    await channel.send(content=content, embed=embed)
-    await interaction.response.send_message("Broadcast sendt.", ephemeral=True)
-
-
 @bot.tree.command(name="sync", description="Tving en kalendersync nu")
 @admin_only()
 async def sync(interaction: discord.Interaction):
@@ -814,9 +701,6 @@ async def deletecalendar(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     await delete_calender()
     await interaction.followup.send("Alle events slettet.")
-
-
-bot.tree.add_command(broadcast_group)
 
 @tasks.loop(hours=1.5)
 async def sync_calendar_loop():
