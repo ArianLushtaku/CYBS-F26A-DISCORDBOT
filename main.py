@@ -61,6 +61,16 @@ def _save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def admin_only():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.user.guild_permissions.administrator:
+            return True
+        await interaction.response.send_message(
+            "Du skal være administrator for at bruge denne kommando.", ephemeral=True
+        )
+        return False
+    return app_commands.check(predicate)
+
 def _prune_state(state: dict) -> dict:
     allowed = {
         "calendar_channel_ids",
@@ -578,6 +588,7 @@ async def delete_calender():
 
 
 @bot.tree.command(name="setup", description="Vælg hvilken kanal kalenderen postes i")
+@admin_only()
 @app_commands.describe(channel="Tekstkanalen hvor ugekalenderen skal opdateres")
 async def setup(interaction: discord.Interaction, channel: discord.TextChannel):
     if interaction.guild is None:
@@ -790,6 +801,7 @@ async def broadcast_skema(
 
 
 @bot.tree.command(name="sync", description="Tving en kalendersync nu")
+@admin_only()
 async def sync(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     await poll_calendar()
@@ -797,6 +809,7 @@ async def sync(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="deletecalendar", description="Slet alle Discord scheduled events som botten har oprettet")
+@admin_only()
 async def deletecalendar(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     await delete_calender()
