@@ -12,16 +12,25 @@ from fastapi import FastAPI
 import json
 from pathlib import Path
 from typing import Optional
+from motor.motor_asyncio import AsyncIOMotorClient
+
+
 
 
 app = FastAPI()
 
 
 load_dotenv()
+
+EXCLUDED_GUILD_IDS = {
+}
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CALENDAR_URL = os.getenv("CALENDER_URL")
+MONGODB_URI = os.getenv("MONGODB_URI")
 
-STATE_FILE = Path("state.json")
+mongo = AsyncIOMotorClient(MONGODB_URI)
+db = mongo["discord_bot"]
+guild_state_col = db["guild_state"]
 
 intents = discord.Intents.default()
 intents.message_content = False
@@ -47,20 +56,6 @@ DANISH_MONTHS = [
     "december",
 ]
 
-
-def _load_state() -> dict:
-    if not STATE_FILE.exists():
-        return {}
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def admin_only():
     async def predicate(interaction: discord.Interaction) -> bool:
         if interaction.user.guild_permissions.administrator:
@@ -71,13 +66,18 @@ def admin_only():
         return False
     return app_commands.check(predicate)
 
-def _prune_state(state: dict) -> dict:
-    allowed = {
-        "calendar_channel_ids",
-        "weekly_message_ids",
-        "daily_message_ids",
-    }
-    return {k: v for k, v in state.items() if k in allowed}
+async def get_guild_state(guild_id: int) -> dict:
+    doc = await guild_state_col.find_one({"guild_id": str(guild_id)})
+    return doc or {"guild_id": str(guild_id)}
+
+async def set_guild_state(guild_id: int, updates: dict) -> None:
+    await guild_state_col.update_one(
+        {"guild_id": str(guild_id)},
+        {"$set": updates},
+        upsert=True,
+    )
+
+
 
 
 def _parse_channel_id(value: Optional[str]) -> Optional[int]:
@@ -291,26 +291,46 @@ async def _ensure_pinned_message(channel: discord.abc.Messageable, message_id: O
     return msg.id
 
 
-async def _update_pinned_calendar_messages(guild: discord.Guild, channel: discord.abc.Messageable, merged_events):
-    state = _prune_state(_load_state())
-    weekly_ids = state.get("weekly_message_ids", {})
-    daily_ids = state.get("daily_message_ids", {})
-    guild_key = str(guild.id)
+async def _update_pinned_calendar_messages(
+    guild: discord.Guild,
+    channel: discord.abc.Messageable,
+    merged_events,
+) -> None:
+    # Load per-guild state from MongoDB
+    state = await get_guild_state(guild.id)
+    if guild.id in EXCLUDED_GUILD_IDS:
+        return
 
+    weekly_message_id = state.get("weekly_message_id")
+    daily_message_id = state.get("daily_message_id")
+
+    # Build embeds
     weekly_embed = _build_week_embed(merged_events)
     daily_embed = _build_daily_embed(merged_events)
 
-    weekly_id = weekly_ids.get(guild_key)
-    daily_id = daily_ids.get(guild_key)
+    # Ensure pinned messages exist / are updated
+    weekly_message_id = await _ensure_pinned_message(
+        channel,
+        weekly_message_id,
+        weekly_embed,
+    )
 
-    weekly_ids[guild_key] = await _ensure_pinned_message(channel, weekly_id, weekly_embed)
-    daily_ids[guild_key] = await _ensure_pinned_message(channel, daily_id, daily_embed)
+    daily_message_id = await _ensure_pinned_message(
+        channel,
+        daily_message_id,
+        daily_embed,
+    )
 
-    state["weekly_message_ids"] = weekly_ids
-    state["daily_message_ids"] = daily_ids
-    _save_state(_prune_state(state))
+    # Persist updated message IDs
+    await set_guild_state(
+        guild.id,
+        {
+            "weekly_message_id": weekly_message_id,
+            "daily_message_id": daily_message_id,
+        },
+    )
 
-    return None
+
 
 
 def parse_calendar(max_days_ahead=21):
@@ -365,7 +385,6 @@ async def on_ready():
     global _synced
     print(f"Logged in as {bot.user}")
 
-    _save_state(_prune_state(_load_state()))
     if not _synced:
         await bot.tree.sync()
         print("Synced commands globally")
@@ -405,24 +424,25 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 async def _get_calendar_channel(guild: discord.Guild) -> Optional[discord.abc.Messageable]:
-    state = _load_state()
-    per_guild = state.get("calendar_channel_ids", {})
-    saved_id = per_guild.get(str(guild.id))
-    if saved_id is not None:
-        ch = guild.get_channel(int(saved_id))
-        if ch is not None:
-            return ch
+    state = await get_guild_state(guild.id)
+    channel_id = state.get("calendar_channel_id")
 
-    if guild.system_channel is not None:
-        return guild.system_channel
-    for ch in guild.text_channels:
-        perms = ch.permissions_for(guild.me)
-        if perms.send_messages:
-            return ch
-    return None
+    if not channel_id:
+        return None
+    
+    ch = guild.get_channel(int(channel_id))
+    if ch is None:
+        return None
+    
+    if not ch.permissions_for(guild.me).send_messages:
+        return None
+
+    return ch
 
 async def poll_calendar(max_days_ahead: int = 21):
     for guild in bot.guilds:
+        if guild.id in EXCLUDED_GUILD_IDS:
+            continue
         print(f"Updating calendar for guild: {guild.name} ({guild.id})")
 
         merged_events = parse_calendar(max_days_ahead=max_days_ahead)
@@ -564,6 +584,7 @@ async def poll_calendar(max_days_ahead: int = 21):
 
         channel = await _get_calendar_channel(guild)
         if channel is None:
+            print(f"Skipping guild {guild.id}: not set up yet")
             continue
 
         await _update_pinned_calendar_messages(guild, channel, merged_events)
@@ -586,6 +607,14 @@ async def delete_calender():
 @admin_only()
 @app_commands.describe(channel="Tekstkanalen hvor ugekalenderen skal opdateres")
 async def setup(interaction: discord.Interaction, channel: discord.TextChannel):
+
+    if interaction.guild and interaction.guild.id in EXCLUDED_GUILD_IDS:
+        await interaction.response.send_message(
+            "Denne server er midlertidigt udelukket fra test.",
+            ephemeral=True,
+        )
+        return
+
     if interaction.guild is None:
         await interaction.response.send_message("Denne kommando kan kun bruges i en server.", ephemeral=True)
         return
@@ -595,26 +624,20 @@ async def setup(interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.send_message("Jeg har ikke rettighed til at sende beskeder i den kanal.", ephemeral=True)
         return
 
-    state = _prune_state(_load_state())
-    per_guild = state.get("calendar_channel_ids", {})
-    per_guild[str(interaction.guild.id)] = channel.id
-    state["calendar_channel_ids"] = per_guild
-
-    # Reset message ids when changing channel so new pinned messages are created in the correct place.
-    guild_key = str(interaction.guild.id)
-    weekly = state.get("weekly_message_ids", {})
-    daily = state.get("daily_message_ids", {})
-    weekly.pop(guild_key, None)
-    daily.pop(guild_key, None)
-    state["weekly_message_ids"] = weekly
-    state["daily_message_ids"] = daily
-
-    _save_state(_prune_state(state))
+    await set_guild_state(
+        interaction.guild.id,
+        {
+            "calendar_channel_id": channel.id,
+            "weekly_message_id": None,
+            "daily_message_id": None,
+        },
+    )
 
     merged_events = parse_calendar(max_days_ahead=800)
     await _update_pinned_calendar_messages(interaction.guild, channel, merged_events)
 
     await interaction.response.send_message(f"Kalenderkanal sat til {channel.mention}.", ephemeral=True)
+    print('Setup ran')
 
 
 @bot.tree.command(name="uge", description="Vis ugekalenderen (mandag–søndag)")
