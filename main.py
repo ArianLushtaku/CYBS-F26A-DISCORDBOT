@@ -23,6 +23,7 @@ app = FastAPI()
 load_dotenv()
 
 EXCLUDED_GUILD_IDS = {
+    1465690642897305703
 }
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CALENDAR_URL = os.getenv("CALENDER_URL")
@@ -76,18 +77,6 @@ async def set_guild_state(guild_id: int, updates: dict) -> None:
         {"$set": updates},
         upsert=True,
     )
-
-
-
-
-def _parse_channel_id(value: Optional[str]) -> Optional[int]:
-    if not value:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
 
 def _format_danish_date(d: datetime.date) -> str:
     weekday = DANISH_WEEKDAYS[d.weekday()]
