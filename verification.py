@@ -1,9 +1,4 @@
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.utils import formatdate
 import os
-import smtplib
-import ssl
 import string
 import discord
 import re
@@ -15,6 +10,9 @@ from helper_functions import *
 from datetime import timezone, datetime, timedelta
 import discord
 from bot_event import *
+
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 def generate_verification_code():
     """Generate a random 6-digit verification code."""
@@ -186,22 +184,22 @@ async def send_verification_email(member, student):
             return False
         
         # Create message
-        msg = MIMEMultipart()
-        msg['From'] = os.getenv("GMAIL")
-        msg['To'] = email_address
-        msg['Date'] = formatdate(localtime=True)
-        msg['Subject'] = subject
-        
-        msg.attach(MIMEText(body, 'plain'))
-        
-        # Send email using Gmail SMTP
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as server:
-            server.login(os.getenv("GMAIL"), os.getenv("GMAIL_APP_PASSWORD"))
-            server.send_message(msg)
-        
-        print(f"Verification email sent to {email_address}")
-        return True
+        email_message = Mail(
+        from_email=os.getenv("SENDGRID_FROM_EMAIL"),  # your verified SendGrid sender
+        to_emails=email_address,
+        subject=subject,
+        plain_text_content=body
+            )
+
+        # Send via SendGrid API
+        try:
+            sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+            response = sg.send(email_message)
+            print(f"Email sent to {email_address}, status code: {response.status_code}")
+            return True
+        except Exception as e:
+            print(f"Error sending verification email via SendGrid: {e}")
+            return False
     except Exception as e:
         print(f"Error sending verification email: {e}")
         return False
