@@ -1,8 +1,16 @@
+from wsgiref import headers
+from fastapi import Response
 from utils import app, DISCORD_TOKEN
 from bot_event import bot
 import os
 
 # At the bottom of your main.py, replace the current code with:
+
+
+@app.head('/')
+async def HEAD():
+    return Response(status_code=200, headers=headers)
+
 if __name__ == "__main__":
     import uvicorn
     import threading
