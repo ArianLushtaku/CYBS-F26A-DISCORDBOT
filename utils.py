@@ -37,7 +37,6 @@ event_mapping = {}
 load_dotenv()
 
 EXCLUDED_GUILD_IDS = {
-    1465690642897305703
 }
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CALENDAR_URL = os.getenv("CALENDER_URL")
