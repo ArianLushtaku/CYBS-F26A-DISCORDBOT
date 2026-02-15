@@ -10,4 +10,7 @@ dnspython>=2.1.0
 slowapi>=0.1.5
 email-validator>=1.1.3
 jinja2
-sendgrid
+python-dotenv
+google-api-python-client
+google-auth
+google-auth-oauthlib

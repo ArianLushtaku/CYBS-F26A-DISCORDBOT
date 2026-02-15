@@ -1,3 +1,4 @@
+import base64
 import os
 import string
 import discord
@@ -10,9 +11,27 @@ from helper_functions import *
 from datetime import timezone, datetime, timedelta
 import discord
 from bot_event import *
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+
+def build_verification_email(to_email, subject, html_content):
+    # Create a multipart message
+    msg = MIMEMultipart("alternative")
+    msg["To"] = to_email.strip()
+    msg["From"] = os.environ["EMAIL_SENDER"]
+    msg["Subject"] = subject
+
+    # Create the HTML part
+    html_part = MIMEText(html_content, "html", "utf-8")
+    msg.attach(html_part)
+
+    # Encode as base64 for Gmail API
+    raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    return {"raw": raw_message}
+
 
 def generate_verification_code():
     """Generate a random 6-digit verification code."""
@@ -161,22 +180,18 @@ async def send_verification_email(member, student):
         )
         subject = "Bekræft din email - Discord Verifikation"
         body = f"""
-        Hej {student['name'].split()[0]},
-        
-        En discord bruger, {member.name} prøver at verificere sin profil med dit navn. Klik på linket nedenfor for at bekræfte din email, hvis dette var dig:
-        
-        {verification_url}
-        
-        Dette link udløber om 24 timer.
-        
-        Hvis du ikke har bedt om denne email, kan du ignorere den.
-        
-        Med venlig hilsen,
-
-        Din Trofaste Robot,
-        CYBS-F26-A
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height:1.5; color: #111;">
+            <h2 style="color: #2a9d8f;">Hej {student['name'].split()[0]},</h2>
+            <p>En Discord bruger, <strong>{member.name}</strong>, prøver at verificere sin profil med dit navn. Klik på linket nedenfor for at bekræfte din email:</p>
+            <p><a href="{verification_url}" style="display:inline-block; padding:10px 20px; background-color:#2a9d8f; color:white; text-decoration:none; border-radius:5px;">Bekræft email</a></p>
+            <p style="color: #555;">Dette link udløber om 24 timer.</p>
+            <p>Hvis du ikke har bedt om denne email, kan du ignorere den.</p>
+            <hr>
+            <p style="font-size:0.9em; color:#888;">Din Trofaste Robot, CYBS-F26-A</p>
+        </body>
+        </html>
         """
-        
         # Get email address (try 'mail' first, then 'email' for compatibility)
         email_address = student.get('mail') or student.get('email')
         if not email_address:
@@ -184,21 +199,26 @@ async def send_verification_email(member, student):
             return False
         
         # Create message
-        email_message = Mail(
-        from_email="cybs26discordbot@gmail.com",  # your verified SendGrid sender
-        to_emails=email_address,
-        subject=subject,
-        plain_text_content=body
-            )
+        creds = Credentials(
+            None,
+            refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
+            client_id=os.environ["GOOGLE_CLIENT_ID"],
+            client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+            token_uri="https://oauth2.googleapis.com/token"
+        )
 
-        # Send via SendGrid API
+        service = build("gmail", "v1", credentials=creds)
+
+        # Construct the email
+        message = build_verification_email(email_address, subject, body)
+
+        # Send the email
         try:
-            sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
-            response = sg.send(email_message)
-            print(f"Email sent to {email_address}, status code: {response.status_code}")
+            sent = service.users().messages().send(userId="me", body=message).execute()
+            print(f"Verification email sent to {email_address}, message ID: {sent['id']}")
             return True
         except Exception as e:
-            print(f"Error sending verification email via SendGrid: {e}")
+            print(f"Error sending verification email via GMAIL: {e}")
             return False
     except Exception as e:
         print(f"Error sending verification email: {e}")

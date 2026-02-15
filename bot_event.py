@@ -89,7 +89,7 @@ async def on_message(message):
             try:
                 verification_start = verification['verification_start']
                 # MongoDB may return datetime in different formats, handle both
-                if isinstance(verification_start, datetime):
+                if isinstance(verification_start, datetime.datetime):
                     start_time = verification_start
                     # Make timezone-aware if naive
                     if start_time.tzinfo is None:
