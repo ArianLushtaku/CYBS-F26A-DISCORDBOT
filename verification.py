@@ -120,7 +120,8 @@ async def verify_member(member, name):
                     f"**Navn:** {student_name}\n"
                     f"**Email:** {student.get('mail', student.get('email', 'Ikke tilgængelig'))}\n\n"
                     f"📧 En bekræftelsesemail er blevet sendt til din skole-email.\n"
-                    f"Tjek venligst din email og klik på bekræftelseslinket for at fuldføre verifikationen."
+                    f"Tjek venligst din email og klik på bekræftelseslinket for at fuldføre verifikationen.\n "
+                    f"Der kan muligvis gå 1 minut eller mere før du kan se den i indboksen"
                 )
             else:
                 return False, "❌ Kunne ikke sende bekræftelsesemail. Kontakt venligst en administrator for hjælp."
@@ -260,9 +261,10 @@ async def complete_verification(member):
         # Assign the role to the member
         try:
             await member.add_roles(role)
+        except discord.Forbidden:
+            print(f"Missing permissions to add role {role_name} to {member}")
         except Exception as e:
-            print(f"Error adding role to {member}: {e}")
-            return False, f"Error: Could not assign the {role_name} role. Please contact an administrator."
+            print(f"Error adding role: {e}")
         
         # Set the member's nickname to their first name
         # Split the full name into parts
@@ -278,8 +280,10 @@ async def complete_verification(member):
         # Set nickname
         try:
             await member.edit(nick=nickname)
+        except discord.Forbidden:
+            print(f"Missing permissions to change nickname for {member}")
         except Exception as e:
-            print(f"Error setting nickname for {member}: {e}")
+            print(f"Error setting nickname: {e}")
 
         
         # Mark as verified in the database
@@ -586,7 +590,7 @@ async def handle_email_verification(token: str):
         return False, f"Fejl under verifikation: {e}"
     
 
-    
+
 @app.get("/verify-email/{token}", response_class=HTMLResponse)
 async def verify_email(token: str, request: Request):
     # Check User-Agent to ignore link scanners / prefetch bots
