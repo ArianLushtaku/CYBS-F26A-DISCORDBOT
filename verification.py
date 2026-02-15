@@ -185,7 +185,7 @@ async def send_verification_email(member, student):
         
         # Create message
         email_message = Mail(
-        from_email=os.getenv("SENDGRID_FROM_EMAIL"),  # your verified SendGrid sender
+        from_email="cybs26discordbot@gmail.com",  # your verified SendGrid sender
         to_emails=email_address,
         subject=subject,
         plain_text_content=body

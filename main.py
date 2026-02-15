@@ -9,6 +9,7 @@ import os
 
 @app.head('/')
 async def HEAD():
+    headers = {"X-Service": "CYBS-F26A"}
     return Response(status_code=200, headers=headers)
 
 if __name__ == "__main__":
