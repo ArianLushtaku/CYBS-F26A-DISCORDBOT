@@ -5,6 +5,7 @@ import discord
 import re
 import random
 
+from fastapi import Request
 from fastapi.responses import HTMLResponse
 from utils import *
 from helper_functions import *
@@ -164,7 +165,7 @@ async def send_verification_email(member, student):
 
         # Use localhost for default, but allow override via environment variable
         # In production, set BASE_URL to your public domain
-        base_url = os.getenv("BASE_URL", "http://localhost:10000")
+        base_url = os.getenv("BASE_URL")
         verification_url = f"{base_url}/verify-email/{token}"
         
         # Store the verification token
@@ -534,12 +535,6 @@ async def handle_email_verification_on_bot_loop(token: str):
     if record.get("used"):
         return False, "Dette link er allerede brugt"
 
-    # Mark token as used
-    await verification_codes.update_one(
-        {"_id": record["_id"]},
-        {"$set": {"used": True}}
-    )
-
     discord_id = int(record["discord_id"])
     member = None
     
@@ -590,7 +585,86 @@ async def handle_email_verification(token: str):
         traceback.print_exc()
         return False, f"Fejl under verifikation: {e}"
 
-@app.get("/verify-email/{token}", response_class=HTMLResponse)
-async def verify_email(token: str):
+async def verify_email(token: str, request: Request):
+    # Check User-Agent to ignore link scanners / prefetch bots
+    ua = request.headers.get("user-agent", "").lower()
+    if any(x in ua for x in ["google", "microsoft", "scan", "facebookexternalhit", "linkedinbot"]):
+        return HTMLResponse(
+            "<html><body style='font-family:monospace; text-align:center; color:#444;'>"
+            "<h2>Link scanning detected</h2>"
+            "<p>This is an automated scan, not a real verification click.</p>"
+            "</body></html>"
+        )
+
+    # Call your verification logic on the bot loop
     success, message = await handle_email_verification(token)
-    return HTMLResponse(f"<html><body><h2>{message}</h2></body></html>")
+
+    # Build cyber / tech styled HTML page
+    if success:
+        color = "#2a9d8f"
+        title = "✅ Email bekræftet!"
+        icon = "🛡️"
+    else:
+        color = "#e63946"
+        title = "❌ Bekræftelse fejlede"
+        icon = "⚠️"
+
+    html_content = f"""
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>{title}</title>
+      <style>
+        body {{
+            font-family: 'Courier New', monospace;
+            background-color: #0f0f0f;
+            color: #eee;
+            text-align: center;
+            padding: 50px;
+        }}
+        .container {{
+            background-color: #1a1a1a;
+            border: 2px solid {color};
+            border-radius: 15px;
+            display: inline-block;
+            padding: 40px;
+            max-width: 600px;
+        }}
+        h1 {{
+            color: {color};
+            font-size: 2.5em;
+        }}
+        p {{
+            font-size: 1.1em;
+            color: #ccc;
+        }}
+        a.button {{
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 25px;
+            font-size: 1em;
+            background-color: {color};
+            color: #0f0f0f;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+        }}
+        .footer {{
+            margin-top: 40px;
+            font-size: 0.8em;
+            color: #888;
+        }}
+      </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>{icon} {title}</h1>
+            <p>{message}</p>
+            <p class="footer">Din Trofaste Robot - CYBS-F26-A</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(html_content)
