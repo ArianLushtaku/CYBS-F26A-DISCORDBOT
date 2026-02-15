@@ -584,7 +584,10 @@ async def handle_email_verification(token: str):
         import traceback
         traceback.print_exc()
         return False, f"Fejl under verifikation: {e}"
+    
 
+    
+@app.get("/verify-email/{token}", response_class=HTMLResponse)
 async def verify_email(token: str, request: Request):
     # Check User-Agent to ignore link scanners / prefetch bots
     ua = request.headers.get("user-agent", "").lower()
