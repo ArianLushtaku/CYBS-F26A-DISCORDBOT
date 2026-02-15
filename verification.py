@@ -356,9 +356,10 @@ async def complete_verification_task(member, record):
         # Assign the role
         try:
             await member.add_roles(role)
+        except discord.Forbidden:
+            print(f"Missing permissions to add role {role_name} to {member}")
         except Exception as e:
-            print(f"Error adding role to {member}: {e}")
-            return
+            print(f"Error adding role: {e}")
         
         # Set nickname
         # Split the full name into parts
@@ -374,8 +375,10 @@ async def complete_verification_task(member, record):
         # Set nickname
         try:
             await member.edit(nick=nickname)
+        except discord.Forbidden:
+            print(f"Missing permissions to change nickname for {member}")
         except Exception as e:
-            print(f"Error setting nickname for {member}: {e}")
+            print(f"Error setting nickname: {e}")
 
         
         # Mark as verified in the database
