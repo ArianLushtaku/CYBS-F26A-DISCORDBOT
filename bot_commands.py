@@ -13,7 +13,7 @@ import datetime
 @app_commands.describe(channel="Tekstkanalen hvor ugekalenderen skal opdateres")
 async def setup(interaction: discord.Interaction, channel: discord.TextChannel):
 
-    if interaction.guild and interaction.guild.id in EXCLUDED_GUILD_IDS:
+    if interaction.guild and str(interaction.guild.id) in EXCLUDED_GUILD_IDS:
         await interaction.response.send_message(
             "Denne server er midlertidigt udelukket fra test.",
             ephemeral=True,

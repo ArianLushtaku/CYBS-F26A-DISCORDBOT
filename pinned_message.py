@@ -208,7 +208,7 @@ async def _update_pinned_calendar_messages(
 ) -> None:
     # Load per-guild state from MongoDB
     state = await get_guild_state(guild.id)
-    if guild.id in EXCLUDED_GUILD_IDS:
+    if str(guild.id) in EXCLUDED_GUILD_IDS:
         return
 
     weekly_message_id = state.get("weekly_message_id")

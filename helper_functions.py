@@ -31,9 +31,6 @@ async def search_students_by_name(name):
     # Normalize the name: trim whitespace and collapse multiple spaces
     name = re.sub(r'\s+', ' ', name.strip())
     
-    if not name or len(name) < 2:
-        return []
-    
     name_parts = name.split()
     students = []
     
@@ -41,17 +38,6 @@ async def search_students_by_name(name):
     
     # studDb is the collection itself (studentNames collection in discord_bot database)
     collection = studDb
-    
-    # Try a test query to verify connection
-    try:
-        test_doc = await collection.find_one({})
-        if test_doc:
-            print(f"[DEBUG] Test query successful, sample fields: {list(test_doc.keys())}")
-            print(f"[DEBUG] Sample name value: '{test_doc.get('name', 'N/A')}' (type: {type(test_doc.get('name'))})")
-    except Exception as e:
-        print(f"[DEBUG] Test query failed: {e}")
-        import traceback
-        traceback.print_exc()
     
     # Strategy 1: Exact match (case-insensitive)
     try:
@@ -177,13 +163,6 @@ async def ensure_verification_channel(guild):
         await message.pin()
         await message.add_reaction("✅")
 
-
-        # Save to DB
-        data = {
-            "guild_id": guild.id,
-            "verify_channel_id": channel.id,
-            "verify_message_id": message.id
-        }
         if guild_state:
             await db.guild_state.update_one(
                 {"guild_id": guild.id},

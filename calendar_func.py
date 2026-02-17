@@ -17,7 +17,7 @@ from discord.ext import tasks
 
 async def poll_calendar(max_days_ahead: int = 21):
     for guild in bot.guilds:
-        if guild.id in EXCLUDED_GUILD_IDS:
+        if str(guild.id) in EXCLUDED_GUILD_IDS:
             continue
         print(f"Updating calendar for guild: {guild.name} ({guild.id})")
 

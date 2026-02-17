@@ -5,14 +5,318 @@ from discord.ext import commands
 from discord import app_commands
 from utils import *
 from calendar_func import sync_calendar_loop
-from helper_functions import ensure_verification_channel, get_guild_state
-from verification import create_ttl_index, send_verification_dm, send_verification_email, verify_member
+from helper_functions import ensure_verification_channel, search_students_by_name
+from verification import create_ttl_index, send_verification, send_verification_email, verify_member
 from utils import EXCLUDED_GUILD_IDS, verification_codes
-from datetime import timezone
 import datetime
 import re
 
 _synced = False
+
+async def add_support_ticket(guild: discord.Guild, member: discord.Member):
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False
+        ),
+        member: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True
+        )
+    }
+
+    channel = await guild.create_text_channel(
+        name=f"ticket-{member.name}",
+        overwrites=overwrites,
+        reason=f"Opretter verifikation for {member.name}"
+    )
+
+    try:
+        await send_verification(member, channel)
+        # Store ticket channel in DB
+        await user_verification.update_one(
+            {"discord_id": str(member.id)},
+            {"$set": {"ticket_channel_id": channel.id}},
+            upsert=True
+        )
+    except Exception as e:
+        print(f"Ticket setup failed for {member}: {e}")
+        await channel.delete(reason="Verification setup failed")
+        return None
+
+    return channel
+
+
+import discord
+
+async def handle_verification_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    record = await user_verification.find_one(
+        {"discord_id": str(message.author.id)}
+    )
+    if not record:
+        return
+
+    ticket_channel_id = record.get("ticket_channel_id")
+    if not ticket_channel_id or message.channel.id != ticket_channel_id:
+        return
+
+    name_input = message.content.strip()
+    if not name_input:
+        return
+
+    state = record.get("verification_state", "awaiting_name")
+
+    # STATE: Awaiting name input
+    if state == "awaiting_name":
+        students = await search_students_by_name(name_input)
+
+        if not students:
+            await message.channel.send(
+                f"{message.author.mention} Ingen studerende fundet. Prøv igen."
+            )
+            return
+
+        # Single match
+        if len(students) == 1:
+            student = students[0]
+            await message.channel.send(
+                f"{message.author.mention} Fundet: **{student['name']}**.\n"
+                "Bekræft med `ja` hvis det er korrekt."
+            )
+
+            await user_verification.update_one(
+                {"discord_id": str(message.author.id)},
+                {"$set": {
+                    "pending_student": student["_id"],
+                    "verification_state": "awaiting_confirmation"
+                }}
+            )
+            return
+
+        # Multiple matches
+        await user_verification.update_one(
+            {"discord_id": str(message.author.id)},
+            {"$set": {
+                "verification_state": "awaiting_selection",
+                "search_results": [str(s["_id"]) for s in students[:10]],
+                "student_names": [s["name"] for s in students[:10]]  # optional for display
+            }}
+        )
+
+        response = f"{message.author.mention} Flere matches fundet:\n"
+        for i, student in enumerate(students[:10], start=1):
+            response += f"{i}. {student['name']}\n"
+        response += "\nSkriv nummeret på den rigtige."
+
+        await message.channel.send(response)
+        return
+
+    # STATE: Awaiting selection (user types a number)
+    elif state == "awaiting_selection":
+        search_results = record.get("search_results", [])
+        student_names = record.get("student_names", [])
+        try:
+            idx = int(name_input) - 1
+            if idx < 0 or idx >= len(search_results):
+                await message.channel.send("Ugyldigt nummer. Prøv igen.")
+                return
+        except ValueError:
+            await message.channel.send("Skriv et nummer fra listen.")
+            return
+
+        student_id = search_results[idx]
+        student_name = student_names[idx]
+
+        await message.channel.send(
+            f"{message.author.mention} Du har valgt: **{student_name}**. Bekræft med `ja` hvis korrekt."
+        )
+
+        await user_verification.update_one(
+            {"discord_id": str(message.author.id)},
+            {"$set": {
+                "pending_student": student_id,
+                "verification_state": "awaiting_confirmation"
+            }}
+        )
+        return
+
+   # STATE: Awaiting confirmation (user types 'ja')
+    elif state == "awaiting_confirmation":
+        if name_input.lower() in ["ja", "yes"]:
+            pending_student_id = record.get("pending_student")
+            student_doc = await studDb.find_one({"_id": pending_student_id})
+            if not student_doc:
+                await message.channel.send(f"{message.author.mention} Fejl: Studenten kunne ikke findes i databasen.")
+                return
+
+            # Call verify_member to generate and store code
+            success, result_message = await verify_member(message.author, student_doc["name"])
+            if not success:
+                await message.channel.send(f"{message.author.mention} {result_message}")
+                return
+
+            await message.channel.send(
+                f"{message.author.mention} En verifikationskode er sendt til den valgte students email. "
+                "Indtast koden her for at fuldføre verification."
+            )
+
+            await user_verification.update_one(
+                {"discord_id": str(message.author.id)},
+                {"$set": {"verification_state": "awaiting_code"}}
+            )
+
+        else:
+            await user_verification.update_one(
+                {"discord_id": str(message.author.id)},
+                {"$set": {"verification_state": "awaiting_name"}}
+            )
+            await message.channel.send(
+                f"{message.author.mention} Bekræftelsen blev ikke accepteret. Skriv venligst dit navn igen."
+            )
+        return
+
+    # STATE: Awaiting code input
+    elif state == "awaiting_code":
+        code_record = await verification_codes.find_one({"member": message.author.name})
+        expected_code = code_record.get("code") if code_record else None
+        if not expected_code:
+            await message.channel.send(f"{message.author.mention} Fejl: Ingen kode fundet. Kontakt en admin.")
+            return
+
+        if name_input.strip() == expected_code:
+            await message.channel.send(f"{message.author.mention} Koden er korrekt. Verifikation fuldført!")
+
+            # Call the update function
+            await update_discord_user_after_verification(message.author, record.get("pending_student"))
+
+
+            record = await user_verification.find_one(
+                {"discord_id": str(message.author.id)}
+            )
+
+            student_name = code_record.get("student")
+            student_id = record.get("pending_student")
+
+            await update_discord_user_after_verification(
+                message.author,
+                student_id
+            )
+
+            # Transfer needed fields into user_verification
+            await user_verification.update_one(
+                {"discord_id": str(message.author.id)},
+                {"$set": {
+                    "verification_state": "completed",
+                    "verified": True,
+                    "member": message.author.name,
+                    "student": student_name,
+                    "ticket_channel_id": None,
+                }}
+            )
+
+            await verification_codes.delete_one(
+                {"_id": code_record["_id"]}
+            )
+
+            # Delete the verification channel after 10 seconds
+            await message.channel.send("Denne kanal bliver slettet om 10 sekunder.")
+            await asyncio.sleep(10)
+            try:
+                await message.channel.delete()
+            except discord.Forbidden:
+                print(f"Could not delete channel {message.channel.name}, permissions missing.")
+
+        else:
+            await message.channel.send(f"{message.author.mention} Forkert kode. Prøv igen.")
+        return
+    
+async def update_discord_user_after_verification(member: discord.Member, student_id):
+    """
+    Update the Discord user after verification:
+    - Change nickname to 'First N. N.' format
+    - Assign role based on hold ('Hold_A' or 'Hold_B')
+    - Handle admins above bot for nickname gracefully
+    """
+    student = await studDb.find_one({"_id": student_id})
+    if not student:
+        print(f"Student {student_id} not found in database.")
+        return False
+
+    guild = member.guild
+
+    # Format nickname: First + initials
+    name_parts = student["name"].split()
+    if len(name_parts) >= 2:
+        nickname = name_parts[0]  # First name
+        for part in name_parts[1:]:
+            nickname += f" {part[0]}."
+    else:
+        nickname = student["name"]
+
+    # Assign role based on 'hold'
+    hold = student.get("hold", "")
+    role_name = None
+    if hold == "Hold_A":
+        role_name = "Hold_A"
+    elif hold == "Hold_B":
+        role_name = "Hold_B"
+
+    success = True
+    try:
+        # Try to set nickname
+        await member.edit(nick=nickname)
+    except discord.Forbidden:
+        # Bot cannot change nickname (admin or higher role)
+        success = True  # Roles and verification can still succeed
+        await member.send(
+            f"Hej {member.name}, jeg kunne ikke ændre dit nickname pga. dine rolleindstillinger. "
+            f"Venligst ændr manuelt til {nickname}."
+        )
+
+    # Assign role if exists
+    if role_name:
+        role = discord.utils.get(guild.roles, name=role_name)
+        if role:
+            try:
+                await member.add_roles(role, reason="Student verified")
+            except discord.Forbidden:
+                print(f"Cannot assign role {role_name} to {member.name}, permissions missing.")
+        else:
+            print(f"Role {role_name} not found in guild.")
+    else:
+        print(f'No roles')
+    return success
+
+
+async def reset_user_verification(guild, member):
+    # 1. Delete existing ticket channels for this user
+    ticket_channel_name = f"ticket-{member.name}".lower()
+
+    for channel in guild.channels:
+        if channel.name.lower() == ticket_channel_name:
+            try:
+                await channel.delete(reason="Resetting duplicate verification ticket")
+            except Exception as e:
+                print(f"Failed to delete channel {channel.name}: {e}")
+
+    # 2. Remove verification codes
+    await db.verification_codes.delete_many({
+        "discord_id": str(member.id)
+    })
+
+    # 3. Remove user_verification ONLY if not verified
+    record = await db.user_verification.find_one({
+        "discord_id": str(member.id)
+    })
+
+    if record and not record.get("verified", False):
+        await db.user_verification.delete_one({
+            "discord_id": str(member.id)
+        })
+
 
 @bot.event
 async def on_member_join(member):
@@ -22,10 +326,9 @@ async def on_member_join(member):
     
     if not has_hold_role:
         # Send verification DM
-        await send_verification_dm(member)
+        await add_support_ticket(member)
     
-    # You might want to assign a temporary role with restricted permissions
-    # until verification is complete
+
     try:
         unverified_role = discord.utils.get(member.guild.roles, name="Unverified")
         if not unverified_role:
@@ -73,126 +376,15 @@ async def on_message(message):
             pass
         return
         
-    # Check if this is a DM
-    if isinstance(message.channel, discord.DMChannel):
-        user_id = str(message.author.id)
-
-        # Check if this user is in the middle of verification
-        verification = await verification_codes.find_one({"discord_id": user_id})
-        if not verification:
-            # Not in verification process, ignore
-            await message.channel.send("Vær venlig at deltage i serveren og bruge verifikationsprocessen der.")
-            return
-        
-        # Check if verification has exceeded 2 minutes
-        if 'verification_start' in verification:
-            try:
-                verification_start = verification['verification_start']
-                # MongoDB may return datetime in different formats, handle both
-                if isinstance(verification_start, datetime.datetime):
-                    start_time = verification_start
-                    # Make timezone-aware if naive
-                    if start_time.tzinfo is None:
-                        start_time = start_time.replace(tzinfo=timezone.utc)
-                else:
-                    # Try to convert if it's stored differently
-                    start_time = verification_start
-                    if isinstance(start_time, datetime) and start_time.tzinfo is None:
-                        start_time = start_time.replace(tzinfo=timezone.utc)
-                
-                elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
-                if elapsed > 120:  # 2 minutes
-                    # Clear verification to allow restart
-                    await verification_codes.delete_one({"discord_id": user_id})
-                    await message.channel.send(
-                        "Verifikationen har taget mere end 2 minutter og er blevet annulleret. "
-                        "Du kan starte forfra ved at reagere på beskeden i kanalen verifikation."
-                    )
-                    return
-            except (TypeError, ValueError, AttributeError) as e:
-                # If we can't parse the datetime, continue with verification
-                print(f"Error checking verification timeout: {e}")
-                pass
-            
-        # Check if we're waiting for a selection from multiple matches
-        if 'possible_matches' in verification and verification['possible_matches']:
-            try:
-                selection = int(message.content.strip()) - 1
-                matches = verification['possible_matches']
-                
-
-
-                if 0 <= selection < len(matches):
-                    student = matches[selection]
-                    student_name = student.get('name', 'Ukendt')
-                    student_email = student.get('mail', student.get('email', ''))
-                    
-                    # Send verification email
-                    email_sent = await send_verification_email(message.author, student)
-                    if email_sent:
-                        await message.channel.send(
-                            f"✅ **Navn bekræftet!**\n\n"
-                            f"**Navn:** {student_name}\n"
-                            f"**Email:** {student_email}\n\n"
-                            f"📧 En bekræftelsesemail er blevet sendt til din skole-email.\n"
-                            f"Tjek venligst din email og klik på bekræftelseslinket for at fuldføre verifikationen."
-                        )
-                        
-                        # Clear the possible matches and mark name as provided
-                        await verification_codes.update_one(
-                            {"discord_id": user_id},
-                            {
-                                "$unset": {"possible_matches": ""},
-                                "$set": {"name_provided": True}
-                            }
-                        )
-                    else:
-                        await message.channel.send("❌ Kunne ikke sende bekræftelsesemail. Kontakt venligst en administrator for hjælp.")
-                else:
-                    await message.channel.send(f"❌ Ugyldigt valg. Angiv venligst et nummer mellem 1 og {len(matches)}.")
-                return
-                    
-            except ValueError:
-                await message.channel.send("❌ Angiv venligst et gyldigt nummer fra listen (f.eks. 1, 2, 3...).")
-                return
-        
-        # Handle name verification - keep retrying until success
-        # Check if we have a code but name hasn't been successfully verified yet
-        if 'code' in verification and not verification.get('name_provided', False):
-            name = message.content.strip()
-            if not name or len(name) < 2:
-                await message.channel.send("Angiv venligst et gyldigt navn (mindst 2 tegn).")
-                return
-            
-            # Normalize name before processing
-            name = re.sub(r'\s+', ' ', name.strip())
-            
-            # Proceed with verification (with timeout to prevent freezing)
-            try:
-                success, response = await asyncio.wait_for(
-                    verify_member(message.author, name),
-                    timeout=30.0  # 30 second timeout
-                )
-                await message.channel.send(response)
-                
-                # Only mark name_provided as True if verification succeeded
-                if success:
-                    await verification_codes.update_one(
-                        {"discord_id": user_id},
-                        {"$set": {"name_provided": True, "name": name}}
-                    )
-                # If not successful, don't mark name_provided - user can try again
-            except asyncio.TimeoutError:
-                await message.channel.send("Verifikationen tog for lang tid. Prøv venligst igen med dit navn.")
-            except Exception as e:
-                print(f"Error in verification process: {e}")
-                import traceback
-                traceback.print_exc()
-                await message.channel.send("Der opstod en fejl under verifikationen. Prøv venligst igen med dit navn.")
-        
-    # Process commands if this is not a DM
     if not isinstance(message.channel, discord.DMChannel):
         await bot.process_commands(message)
+    
+
+    try:
+        await handle_verification_message(message)
+    except Exception as e:
+        print(f'Error: {e}')
+
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
@@ -228,7 +420,9 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 
     # Start verification for this member only
     try:
-        result = await send_verification_dm(member)  # Your existing DM verification function
+        await reset_user_verification(guild, member)
+
+        result = await add_support_ticket(guild, member)
         global verified_count, failed_count
         await asyncio.sleep(1)  # Rate limiting
     except Exception as e:
@@ -241,7 +435,7 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     await create_ttl_index()
     for guild in bot.guilds:
-        if guild.id not in EXCLUDED_GUILD_IDS:
+        if str(guild.id) not in EXCLUDED_GUILD_IDS:
             await ensure_verification_channel(guild)
 
     if not _synced:
