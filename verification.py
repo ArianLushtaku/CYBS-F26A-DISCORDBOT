@@ -613,63 +613,19 @@ async def verify_email(token: str, request: Request):
     if success:
         color = "#2a9d8f"
         title = "✅ Email bekræftet!"
-        icon = "🛡️"
     else:
         color = "#e63946"
         title = "❌ Bekræftelse fejlede"
-        icon = "⚠️"
 
     html_content = f"""
     <html>
     <head>
       <meta charset="UTF-8">
       <title>{title}</title>
-      <style>
-        body {{
-            font-family: 'Courier New', monospace;
-            background-color: #0f0f0f;
-            color: #eee;
-            text-align: center;
-            padding: 50px;
-        }}
-        .container {{
-            background-color: #1a1a1a;
-            border: 2px solid {color};
-            border-radius: 15px;
-            display: inline-block;
-            padding: 40px;
-            max-width: 600px;
-        }}
-        h1 {{
-            color: {color};
-            font-size: 2.5em;
-        }}
-        p {{
-            font-size: 1.1em;
-            color: #ccc;
-        }}
-        a.button {{
-            display: inline-block;
-            margin-top: 20px;
-            padding: 12px 25px;
-            font-size: 1em;
-            background-color: {color};
-            color: #0f0f0f;
-            text-decoration: none;
-            border-radius: 5px;
-            font-weight: bold;
-            letter-spacing: 0.5px;
-        }}
-        .footer {{
-            margin-top: 40px;
-            font-size: 0.8em;
-            color: #888;
-        }}
-      </style>
     </head>
     <body>
         <div class="container">
-            <h1>{icon} {title}</h1>
+            <h1>{title}</h1>
             <p>{message}</p>
             <p class="footer">Din Trofaste Robot - CYBS-F26-A</p>
         </div>
