@@ -124,6 +124,9 @@ async def poll_calendar(max_days_ahead: int = 21):
                 d_end = _norm_dt(d["end"])
                 d_loc = _norm_loc(d["location"])
 
+                if ev.status != discord.EventStatus.scheduled:
+                    continue
+
                 if ev.name != d["name"] or ev_start != d_start or ev_end != d_end or ev_loc != d_loc:
                     print('Updating event:', ev.name)
                     await ev.edit(

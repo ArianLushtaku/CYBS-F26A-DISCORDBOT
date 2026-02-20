@@ -326,7 +326,7 @@ async def on_member_join(member):
     
     if not has_hold_role:
         # Send verification DM
-        await add_support_ticket(member)
+        await add_support_ticket(member.guild, member)
     
 
     try:
