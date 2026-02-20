@@ -276,6 +276,17 @@ async def update_discord_user_after_verification(member: discord.Member, student
             f"Venligst ændr manuelt til {nickname}."
         )
 
+    try:
+        unverified = discord.utils.get(guild.roles, name="Unverified")
+        if unverified is None:
+            return
+
+        if unverified in member.roles:
+            await member.remove_roles(unverified, reason="Auto-remove Unverified role")
+    except Exception as e:
+        print(e)
+
+
     # Assign role if exists
     if role_name:
         role = discord.utils.get(guild.roles, name=role_name)

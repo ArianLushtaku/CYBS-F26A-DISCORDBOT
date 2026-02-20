@@ -132,6 +132,7 @@ async def verify_member(member, name):
                     f"📧 En bekræftelsesemail er blevet sendt til din skole-email.\n"
                     f"Tjek venligst din email og klik på bekræftelseslinket for at fuldføre verifikationen.\n "
                     f"Der kan muligvis gå 1 minut eller mere før du kan se den i indboksen"
+                    f"\n!HUSK AT TJEKKE UØNSKET MAIL!"
                 )
             else:
                 return False, "❌ Kunne ikke sende bekræftelsesemail. Kontakt venligst en administrator for hjælp."

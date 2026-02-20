@@ -154,7 +154,7 @@ async def ensure_verification_channel(guild):
         "1️⃣ Reagér med ✅ på denne besked.\n"
         "2️⃣ Indtast dit fulde navn, eller fornavn.\n"
         "3️⃣ Vælg den korrekte person fra listen (hvis flere matches findes).\n"
-        "4️⃣ Du modtager en bekræftelsesmail på din skolemail.\n"
+        "4️⃣ Du modtager en bekræftelsesmail på din skolemail. (Tjek evt. uønsket mail)\n"
         "5️⃣ Klik på linket i mailen for at fuldføre verifikationen.\n\n"
         "Når du er verificeret, får du automatisk adgang og dit fornavn bliver sat som nickname.\n\n"
         "⚠️ Hvis problemer opstår, kontakt venligst Arian Lushtaku \n\n"
