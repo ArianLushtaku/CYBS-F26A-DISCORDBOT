@@ -1,15 +1,11 @@
 import asyncio
-from typing import Optional
 import discord
-from discord.ext import commands
 from discord import app_commands
 from utils import *
 from calendar_func import sync_calendar_loop
 from helper_functions import ensure_verification_channel, search_students_by_name
-from verification import create_ttl_index, send_verification, send_verification_email, verify_member
+from verification import create_ttl_index, send_verification, verify_member
 from utils import EXCLUDED_GUILD_IDS, verification_codes
-import datetime
-import re
 
 _synced = False
 
@@ -46,8 +42,6 @@ async def add_support_ticket(guild: discord.Guild, member: discord.Member):
 
     return channel
 
-
-import discord
 
 async def handle_verification_message(message: discord.Message):
     if message.author.bot:
@@ -124,7 +118,12 @@ async def handle_verification_message(message: discord.Message):
                 await message.channel.send("Ugyldigt nummer. Prøv igen.")
                 return
         except ValueError:
-            await message.channel.send("Skriv et nummer fra listen.")
+            await record.update_one( # type: ignore
+                {"discord_id": str(message.author.id)},
+                {"$set": {
+                    "verification_state": "awaiting_name"
+                }}
+            )
             return
 
         student_id = search_results[idx]
@@ -329,50 +328,50 @@ async def reset_user_verification(guild, member):
         })
 
 
-@bot.event
-async def on_member_join(member):
-    """Handle new member joining the server."""
-    # Check if member has the required role
-    has_hold_role = any(role.name in ["Hold A", "Hold B"] for role in member.roles)
+# @bot.event
+# async def on_member_join(member):
+#     """Handle new member joining the server."""
+#     # Check if member has the required role
+#     has_hold_role = any(role.name in ["Hold A", "Hold B"] for role in member.roles)
     
-    if not has_hold_role:
-        # Send verification DM
-        await add_support_ticket(member.guild, member)
+#     if not has_hold_role:
+#         # Send verification DM
+#         await add_support_ticket(member.guild, member)
     
 
-    try:
-        unverified_role = discord.utils.get(member.guild.roles, name="Unverified")
-        if not unverified_role:
-            # Create the role if it doesn't exist
-            unverified_role = await member.guild.create_role(
-                name="Unverified",
-                permissions=discord.Permissions.none(),  # No permissions
-                reason="Auto-created Unverified role"
-            )
+#     try:
+#         unverified_role = discord.utils.get(member.guild.roles, name="Unverified")
+#         if not unverified_role:
+#             # Create the role if it doesn't exist
+#             unverified_role = await member.guild.create_role(
+#                 name="Unverified",
+#                 permissions=discord.Permissions.none(),  # No permissions
+#                 reason="Auto-created Unverified role"
+#             )
             
-            # Move the role to the bottom of the role list (lowest priority)
-            try:
-                await unverified_role.edit(position=0)
-            except:
-                pass  # Might not have permissions to edit roles
+#             # Move the role to the bottom of the role list (lowest priority)
+#             try:
+#                 await unverified_role.edit(position=0)
+#             except:
+#                 pass  # Might not have permissions to edit roles
             
-            # Update channel permissions to restrict access
-            for channel in member.guild.channels:
-                try:
-                    await channel.set_permissions(
-                        unverified_role,
-                        read_messages=False,
-                        send_messages=False,
-                        view_channel=False
-                    )
-                except:
-                    continue  # Skip if we can't update channel permissions
+#             # Update channel permissions to restrict access
+#             for channel in member.guild.channels:
+#                 try:
+#                     await channel.set_permissions(
+#                         unverified_role,
+#                         read_messages=False,
+#                         send_messages=False,
+#                         view_channel=False
+#                     )
+#                 except:
+#                     continue  # Skip if we can't update channel permissions
         
-        # Assign the unverified role
-        await member.add_roles(unverified_role)
+#         # Assign the unverified role
+#         await member.add_roles(unverified_role)
         
-    except Exception as e:
-        print(f"Error handling new member {member}: {e}")
+#     except Exception as e:
+#         print(f"Error handling new member {member}: {e}")
 
 @bot.event
 async def on_message(message):
