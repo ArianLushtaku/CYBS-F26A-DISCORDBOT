@@ -5,7 +5,7 @@ from utils import *
 from helper_functions import _format_danish_date, admin_only, set_guild_state
 from discord import app_commands
 import discord
-import datetime
+from datetime import datetime, timezone
 
 
 @bot.tree.command(name="setup", description="Vælg hvilken kanal kalenderen postes i")
@@ -79,7 +79,7 @@ async def skema(
     vis: Optional[app_commands.Choice[str]] = None,
 ):
     merged_events = parse_calendar()
-    today = datetime.now(datetime.timezone.utc).date()
+    today = datetime.now(timezone.utc).date()
 
     mode = (vis.value if vis is not None else "today")
     events_today = [e for e in merged_events if e[1] == today]
