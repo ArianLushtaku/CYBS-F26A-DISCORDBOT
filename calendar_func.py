@@ -113,6 +113,8 @@ async def poll_calendar(max_days_ahead: int = 21):
             discord_by_key[key] = [keep]
 
         # Upsert desired events (do not create anything until after existing events are indexed)
+        now = datetime.now(timezone.utc)
+
         for key, d in desired.items():
             existing = discord_by_key.get(key)
             if existing:
@@ -128,23 +130,37 @@ async def poll_calendar(max_days_ahead: int = 21):
                     continue
 
                 if ev.name != d["name"] or ev_start != d_start or ev_end != d_end or ev_loc != d_loc:
+                    # Skip editing start_time to a past value; Discord will reject it
+                    if d["start"] <= now:
+                        print(f"Skipping edit for past-starting event: {ev.name}")
+                        continue
                     print('Updating event:', ev.name)
-                    await ev.edit(
+                    try:
+                        await ev.edit(
+                            name=d["name"],
+                            start_time=d["start"],
+                            end_time=d["end"],
+                            location=d["location"],
+                        )
+                    except discord.HTTPException as e:
+                        print(f"Failed to update event '{ev.name}': {e}")
+            else:
+                # Skip creating events that have already started/passed
+                if d["start"] <= now:
+                    print(f"Skipping past/ongoing event: {d['name']} (started {d['start']})")
+                    continue
+                print('Creating event:', d["name"])
+                try:
+                    await guild.create_scheduled_event(
                         name=d["name"],
                         start_time=d["start"],
                         end_time=d["end"],
                         location=d["location"],
+                        entity_type=discord.EntityType.external,
+                        privacy_level=discord.PrivacyLevel.guild_only,
                     )
-            else:
-                print('Creating event:', d["name"])
-                await guild.create_scheduled_event(
-                    name=d["name"],
-                    start_time=d["start"],
-                    end_time=d["end"],
-                    location=d["location"],
-                    entity_type=discord.EntityType.external,
-                    privacy_level=discord.PrivacyLevel.guild_only,
-                )
+                except discord.HTTPException as e:
+                    print(f"Failed to create event '{d['name']}': {e}")
 
         # Optionally delete Discord events that are no longer in the calendar.
         # Safety: only delete events created by this bot.
@@ -182,7 +198,8 @@ def parse_calendar(max_days_ahead=21):
         summary = str(component.get("summary"))
         uid = str(component.get("uid"))
 
-        if "CYBS" not in summary and uid != "143983--425817795-0@timeedit.com":
+        description = str(component.get("description") or "")
+        if "CYBS" not in summary and "CYS-GBG" not in summary and "CYBS" not in description and "CYS-GBG" not in description and uid != "143983--425817795-0@timeedit.com":
             continue
 
         cleaned_summary = re.sub(
